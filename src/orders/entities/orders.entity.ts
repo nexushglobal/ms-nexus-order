@@ -36,11 +36,12 @@ export class Order {
   })
   orderHistory: OrderHistory[];
 
-  @Column({ type: 'integer' })
+  @Column({ type: 'integer', name: 'total_items' })
   totalItems: number;
 
   @Column({
     type: 'decimal',
+    name: 'total_amount',
     precision: 10,
     scale: 2,
     default: 217,
@@ -57,9 +58,9 @@ export class Order {
   @Column({ type: 'json', nullable: true })
   metadata: Record<string, any>;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 }
