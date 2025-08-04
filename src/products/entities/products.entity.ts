@@ -35,6 +35,7 @@ export class Product {
 
   @Column({
     type: 'decimal',
+    name: 'number_price',
     precision: 10,
     scale: 2,
     transformer: {
@@ -46,6 +47,7 @@ export class Product {
 
   @Column({
     type: 'decimal',
+    name: 'public_price',
     precision: 10,
     scale: 2,
     transformer: {
@@ -87,13 +89,13 @@ export class Product {
   @OneToMany(() => ProductStockHistory, (history) => history.product)
   stockHistory: ProductStockHistory[];
 
-  @Column({ default: true })
+  @Column({ default: true, name: 'is_active' })
   isActive: boolean;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 
   @BeforeInsert()

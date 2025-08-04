@@ -20,13 +20,13 @@ export class ProductImage {
   @Column({ nullable: true })
   urlKey: string;
 
-  @Column({ default: false })
+  @Column({ default: false, name: 'is_main' })
   isMain: boolean;
 
   @Column({ default: 0 })
   order: number;
 
-  @Column({ default: true })
+  @Column({ default: true, name: 'is_active' })
   isActive: boolean;
 
   @ManyToOne(() => Product, (product) => product.images, {
@@ -34,9 +34,9 @@ export class ProductImage {
   })
   product: Product;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 }

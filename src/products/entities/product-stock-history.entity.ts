@@ -23,16 +23,17 @@ export class ProductStockHistory {
   @Column({
     type: 'enum',
     enum: StockActionType,
+    name: 'action_type',
   })
   actionType: StockActionType;
 
-  @Column()
+  @Column({ name: 'previous_quantity' })
   previousQuantity: number;
 
-  @Column()
+  @Column({ name: 'new_quantity' })
   newQuantity: number;
 
-  @Column()
+  @Column({ name: 'quantity_changed' })
   quantityChanged: number;
 
   @Column({ nullable: true })
@@ -47,6 +48,6 @@ export class ProductStockHistory {
   @Column({ name: 'user_name', nullable: true })
   userName?: string;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }
