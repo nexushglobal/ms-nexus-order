@@ -35,7 +35,7 @@ export class Product {
 
   @Column({
     type: 'decimal',
-    name: 'number_price',
+    name: 'member_price',
     precision: 10,
     scale: 2,
     transformer: {
