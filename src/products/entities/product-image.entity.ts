@@ -18,7 +18,7 @@ export class ProductImage {
   @Column()
   url: string;
 
-  @Column({ nullable: true })
+  @Column({ nullable: true, name: 'url_key' })
   urlKey: string;
 
   @Column({ default: false, name: 'is_main' })
