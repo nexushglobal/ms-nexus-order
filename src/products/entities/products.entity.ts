@@ -4,6 +4,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  JoinColumn,
   ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
@@ -78,6 +79,7 @@ export class Product {
   sku: string;
 
   @ManyToOne(() => ProductCategory, (category) => category.products)
+  @JoinColumn({ name: 'category_id' })
   category: ProductCategory;
 
   @OneToMany(() => ProductImage, (image) => image.product, {
