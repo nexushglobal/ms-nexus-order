@@ -12,7 +12,7 @@ import { OrdersDetails } from './orders-details.entity';
 import { OrderHistory } from './orders-history.entity';
 
 @Entity('orders')
-@Index(['user'])
+@Index(['userId'])
 export class Order {
   @PrimaryGeneratedColumn()
   id: number;
