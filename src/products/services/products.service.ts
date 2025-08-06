@@ -1,18 +1,107 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { forwardRef, HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { InjectRepository } from '@nestjs/typeorm';
 import { paginate } from 'src/common/helpers/paginate.helper';
-import { Repository } from 'typeorm';
+import { UsersService } from 'src/common/services/users.service';
+import { DataSource, Repository } from 'typeorm';
+import {
+  CreateProductDto,
+  CreateProductResponseDto,
+} from '../dto/create-product.dto';
 import { FindProductsDto } from '../dto/find-products.dto';
-import { Product } from '../entities/products.entity';
+import { UpdateProductDto } from '../dto/update-product.dto';
+import { ProductImage } from '../entities/product-image.entity';
+import { Product, ProductStatus } from '../entities/products.entity';
+import { formatCreateProductResponse } from '../helpers/format-create-product-response.helper';
 import { formatProductResponse } from '../helpers/format-product-response.helper';
+import { formatUpdateProductResponse } from '../helpers/format-update-product-response.helper';
+import { ProductCategoryService } from './product-category.service';
+import { ProductImageService } from './product-image.service';
+import { ProductStockHistoryService } from './product-stock-history.service';
 
 @Injectable()
 export class ProductsService {
   constructor(
     @InjectRepository(Product)
     private readonly productsRepository: Repository<Product>,
+    private readonly productCategoryService: ProductCategoryService,
+    private readonly dataSource: DataSource,
+    private readonly productStockHistoryService: ProductStockHistoryService,
+    @Inject(forwardRef(() => ProductImageService))
+    private readonly productImageService: ProductImageService,
+    private readonly usersService: UsersService,
   ) {}
+  async createProduct(
+    createProductDto: CreateProductDto,
+    files: Express.Multer.File[],
+    userId: string,
+  ): Promise<CreateProductResponseDto> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const category = await this.productCategoryService.findOneCategory(
+        createProductDto.categoryId,
+      );
+      const sku = await this.generateSku(category.code, createProductDto.name);
+      const product = this.productsRepository.create({
+        name: createProductDto.name,
+        description: createProductDto.description,
+        memberPrice: createProductDto.memberPrice,
+        composition: createProductDto.composition,
+        publicPrice: createProductDto.publicPrice,
+        stock: createProductDto.stock || 0,
+        benefits: createProductDto.benefits || [],
+        sku,
+        category,
+        status:
+          createProductDto.stock === 0
+            ? ProductStatus.OUT_OF_STOCK
+            : ProductStatus.ACTIVE,
+        isActive: createProductDto.isActive,
+      });
+      let savedImages: ProductImage[] = [];
+      const savedProduct = await queryRunner.manager.save(product);
+      if (files && files.length > 0) {
+        const uploadImagesDto = {
+          files,
+          productId: savedProduct.id,
+        };
+        savedImages = await this.productImageService.uploadProductImages(
+          uploadImagesDto,
+          savedProduct,
+          queryRunner,
+        );
+        console.log(`${savedImages.length} imágenes subidas exitosamente`);
+      }
+
+      if (createProductDto.stock !== undefined && createProductDto.stock > 0) {
+        const user = await this.usersService.getUser(userId);
+        await this.findOne(savedProduct.id);
+        await this.productStockHistoryService.createInitialStock(
+          {
+            stock: createProductDto.stock,
+            userId,
+            userEmail: user.email,
+            userName: user.nickname || '',
+          },
+          savedProduct,
+          queryRunner,
+        );
+      }
+      await queryRunner.commitTransaction();
+
+      return formatCreateProductResponse(savedProduct);
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      // this.logger.error(`Error al crear producto: ${error.message}`);
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   async findAll(findProductsDto: FindProductsDto) {
     const { page, limit } = findProductsDto;
     const paginationDto = { page, limit };
@@ -58,6 +147,26 @@ export class ProductsService {
       return { id, name, sku };
     });
     return formattedItems;
+  }
+
+  async updateProduct(updateProductDto: UpdateProductDto) {
+    const { productId, ...restData } = updateProductDto;
+    await this.findOneProduct(productId);
+    if (updateProductDto.categoryId)
+      await this.productCategoryService.findOneCategory(
+        updateProductDto.categoryId,
+      );
+    const product = await this.productsRepository.preload({
+      id: productId,
+      ...restData,
+    });
+    if (!product)
+      throw new RpcException({
+        status: HttpStatus.NOT_FOUND,
+        message: `Producto con ID ${productId} no encontrado`,
+      });
+    const updatedProduct = await this.productsRepository.save(product);
+    return formatUpdateProductResponse(updatedProduct);
   }
 
   private async findAllProducts(findProductsDto: FindProductsDto) {
@@ -110,5 +219,26 @@ export class ProductsService {
         return a.order - b.order;
       });
     return product;
+  }
+
+  private async generateSku(
+    categoryCode: string,
+    productName: string,
+  ): Promise<string> {
+    const prefix = categoryCode.substring(0, 3).toUpperCase();
+    let productPrefix = '';
+    const words = productName.trim().split(' ');
+    if (words.length > 0)
+      productPrefix = words[0].substring(0, 3).toUpperCase();
+
+    const randomNum = Math.floor(1000 + Math.random() * 9000);
+    const timestamp = Date.now().toString().slice(-4);
+    const sku = `${prefix}-${productPrefix}${randomNum}${timestamp}`;
+    const existingProduct = await this.productsRepository.findOne({
+      where: { sku },
+    });
+
+    if (existingProduct) return this.generateSku(categoryCode, productName);
+    return sku;
   }
 }
