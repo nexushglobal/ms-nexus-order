@@ -28,5 +28,5 @@ export class FileDto {
   size: number;
 
   @IsNotEmpty({ message: 'El buffer del archivo es requerido' })
-  buffer: Buffer;
+  buffer: any;
 }

@@ -71,6 +71,10 @@ export class UpdateProductDto {
   categoryId?: number;
 
   @IsOptional()
+  @IsNumber({}, { message: 'El stock actual es numérico' })
+  stock?: number;
+
+  @IsOptional()
   @IsBoolean()
   @Transform(({ value }) => {
     if (value === 'true') return true;

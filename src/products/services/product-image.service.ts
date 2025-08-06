@@ -112,8 +112,17 @@ export class ProductImageService {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
+
     try {
+      // Buscar producto con imágenes
       const product = await this.productService.findOne(productId);
+      // Validar que el producto tenga imágenes
+      if (!product.images || product.images.length === 0)
+        throw new RpcException({
+          status: HttpStatus.BAD_REQUEST,
+          message: `El producto no tiene imágenes`,
+        });
+      // Buscar imagen específica
       const image = await this.productImageRepository.findOne({
         where: { id: imageId, product: { id: productId } },
       });
@@ -122,38 +131,38 @@ export class ProductImageService {
           status: HttpStatus.NOT_FOUND,
           message: `Imagen con ID ${imageId} no encontrada para el producto`,
         });
-      if (file) {
-        if (image.urlKey) {
-          await this.filesService.deleteImage(image.urlKey);
-          const s3Response = await this.filesService.uploadImage(
-            file,
-            'products',
-          );
-          image.url = s3Response.url;
-          image.urlKey = s3Response.key;
-        }
-        if (updateImageDto.isMain) {
-          const otherImages = product.images.filter(
-            (img) => img.id !== imageId,
-          );
-          for (const otherImage of otherImages) {
-            otherImage.isMain = false;
-            await queryRunner.manager.save(otherImage);
-          }
-        }
-        if (updateImageDto.isMain !== undefined)
-          image.isMain = updateImageDto.isMain;
-        if (updateImageDto.order !== undefined)
-          image.order = updateImageDto.order;
-        const updatedImage = await queryRunner.manager.save(image);
-        await queryRunner.commitTransaction();
-        return {
-          id: updatedImage.id,
-          url: updatedImage.url,
-          isMain: updatedImage.isMain,
-          order: updatedImage.order,
-        };
+      // Si hay un nuevo archivo, actualizar la imagen en S3
+      if (file && image.urlKey) {
+        await this.filesService.deleteImage(image.urlKey);
+        const s3Response = await this.filesService.uploadImage(
+          file,
+          'products',
+        );
+        image.url = s3Response.url;
+        image.urlKey = s3Response.key;
       }
+      // Si se marca como principal, desmarcar las demás
+      if (updateImageDto.isMain === true) {
+        const otherImages = product.images.filter((img) => img.id !== imageId);
+        for (const otherImage of otherImages) {
+          otherImage.isMain = false;
+          await queryRunner.manager.save(otherImage);
+        }
+      }
+      // Actualizar propiedades de la imagen
+      if (updateImageDto.isMain !== undefined)
+        image.isMain = updateImageDto.isMain;
+      if (updateImageDto.order !== undefined)
+        image.order = updateImageDto.order;
+      // Guardar cambios
+      const updatedImage = await queryRunner.manager.save(image);
+      await queryRunner.commitTransaction();
+      return {
+        id: updatedImage.id,
+        url: updatedImage.url,
+        isMain: updatedImage.isMain,
+        order: updatedImage.order,
+      };
     } catch (error) {
       await queryRunner.rollbackTransaction();
       this.logger.error(

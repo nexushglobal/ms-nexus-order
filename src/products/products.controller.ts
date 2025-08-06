@@ -6,11 +6,16 @@ import {
 } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
 import { AddProductImageMessageDto } from './dto/add-product-image-message.dto';
+import { BulkCreateStockDto } from './dto/bulk-create-stock.dto';
 import { CreateProductMessageDto } from './dto/create-product-message.dto';
 import { DeleteProductImageMessageDto } from './dto/delete-product-image-message.dto';
 import { FindProductsDto } from './dto/find-products.dto';
+import { StockHistoryDto } from './dto/stock-history.dto';
 import { UpdateProductImageMessageDto } from './dto/update-product-image-message.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { ValidateStockExcelMessageDto } from './dto/valida-stock-excel-message.dto';
+import { convertToBuffer } from './helpers/convert-to-buffer.helper';
+import { createMulterFile } from './helpers/create-multer-file.helper';
 import { ProductCategoryService } from './services/product-category.service';
 import { ProductImageService } from './services/product-image.service';
 import { ProductStockHistoryService } from './services/product-stock-history.service';
@@ -89,19 +94,7 @@ export class ProductsController {
   @MessagePattern({ cmd: 'products.addImage' })
   async addImageToProduct(@Payload() data: AddProductImageMessageDto) {
     const { productId, file } = data;
-    const multerFile: Express.Multer.File = {
-      fieldname: file.fieldname || 'image',
-      originalname: file.originalname,
-      encoding: file.encoding || '7bit',
-      mimetype: file.mimetype,
-      size: file.size,
-      destination: '',
-      filename: '',
-      path: '',
-      stream: null as any,
-      buffer: file.buffer,
-    };
-
+    const multerFile = createMulterFile(data.file, file.buffer);
     return await this.productImageService.addImageToProduct(
       productId,
       multerFile,
@@ -112,21 +105,7 @@ export class ProductsController {
   async updateProductImage(@Payload() data: UpdateProductImageMessageDto) {
     const { productId, imageId, updateImageDto, file } = data;
     let multerFile: Express.Multer.File | undefined;
-    if (file) {
-      multerFile = {
-        fieldname: file.fieldname || 'image',
-        originalname: file.originalname,
-        encoding: file.encoding || '7bit',
-        mimetype: file.mimetype,
-        size: file.size,
-        destination: '',
-        filename: '',
-        path: '',
-        stream: null as any,
-        buffer: file.buffer,
-      };
-    }
-
+    if (file) multerFile = createMulterFile(data.file, file.buffer);
     return await this.productImageService.updateProductImage(
       productId,
       imageId,
@@ -142,5 +121,25 @@ export class ProductsController {
       productId,
       imageId,
     );
+  }
+
+  @MessagePattern({ cmd: 'products.createStockHistory' })
+  async createStockHistory(@Payload() data: StockHistoryDto) {
+    return await this.productStockHistoryService.createStockHistory(data);
+  }
+
+  @MessagePattern({ cmd: 'products.bulkUpdateStock' })
+  async bulkCreateStock(@Payload() bulkCreateStockDto: BulkCreateStockDto) {
+    return await this.productStockHistoryService.bulkUpdateStock(
+      bulkCreateStockDto,
+    );
+  }
+
+  @MessagePattern({ cmd: 'products.validateStockExcel' })
+  @UsePipes(new ValidationPipe({ transform: true }))
+  async validateStockExcel(@Payload() data: ValidateStockExcelMessageDto) {
+    const buffer = convertToBuffer(data.file.buffer);
+    const multerFile = createMulterFile(data.file, buffer);
+    return await this.productsService.validateStockExcel(multerFile);
   }
 }

@@ -1,13 +1,15 @@
 import { forwardRef, HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { InjectRepository } from '@nestjs/typeorm';
+import * as ExcelJS from 'exceljs';
 import { paginate } from 'src/common/helpers/paginate.helper';
 import { UsersService } from 'src/common/services/users.service';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import {
   CreateProductDto,
   CreateProductResponseDto,
 } from '../dto/create-product.dto';
+import { ExcelStockUpdateDto } from '../dto/excel-stock-update.dto';
 import { FindProductsDto } from '../dto/find-products.dto';
 import { UpdateProductDto } from '../dto/update-product.dto';
 import { ProductImage } from '../entities/product-image.entity';
@@ -26,6 +28,7 @@ export class ProductsService {
     private readonly productsRepository: Repository<Product>,
     private readonly productCategoryService: ProductCategoryService,
     private readonly dataSource: DataSource,
+    @Inject(forwardRef(() => ProductStockHistoryService))
     private readonly productStockHistoryService: ProductStockHistoryService,
     @Inject(forwardRef(() => ProductImageService))
     private readonly productImageService: ProductImageService,
@@ -199,7 +202,7 @@ export class ProductsService {
     };
   }
 
-  private async findOneProduct(id: number, isActive?: boolean) {
+  async findOneProduct(id: number, isActive?: boolean) {
     const whereCondition = isActive ? { id, isActive } : { id };
     const product = await this.productsRepository.findOne({
       where: whereCondition,
@@ -219,6 +222,93 @@ export class ProductsService {
         return a.order - b.order;
       });
     return product;
+  }
+
+  async validateStockExcel(file: Express.Multer.File) {
+    if (!file)
+      throw new RpcException({
+        status: HttpStatus.BAD_REQUEST,
+        message: 'Archivo no proporcionado',
+      });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(file.buffer);
+
+    const worksheet = workbook.worksheets[0];
+    const errors: string[] = [];
+    const validRows: ExcelStockUpdateDto[] = [];
+
+    // Validacion de estructura del Excel (Encabezado)
+    const expectedHeaders = ['ID', 'Producto', 'Cantidad'];
+    const actualHeaders = worksheet.getRow(1).values as string[];
+    if (!expectedHeaders.every((header) => actualHeaders.includes(header)))
+      throw new RpcException({
+        status: HttpStatus.BAD_REQUEST,
+        message: 'Encabezado del archivo no es el esperado',
+      });
+    // Procesar filas
+    worksheet.eachRow({ includeEmpty: true }, (row, rowNumber) => {
+      if (rowNumber === 1) return; // salto de encabezados
+      try {
+        const rowData: ExcelStockUpdateDto = {
+          productId: row.getCell(1).value as number,
+          productName: row.getCell(2).value as string,
+          newQuantity: row.getCell(3).value as number,
+        };
+        // Validaciones básicas
+        if (!rowData.productId || isNaN(rowData.productId))
+          throw new RpcException({
+            status: HttpStatus.BAD_REQUEST,
+            message: `Fila ${rowNumber}: ID del producto inválido`,
+          });
+
+        if (!rowData.productName || typeof rowData.productName !== 'string')
+          throw new RpcException({
+            status: HttpStatus.BAD_REQUEST,
+            message: `Fila ${rowNumber}: Nombre del producto inválido`,
+          });
+
+        if (
+          !rowData.newQuantity ||
+          isNaN(rowData.newQuantity) ||
+          !Number.isInteger(rowData.newQuantity)
+        )
+          throw new RpcException({
+            status: HttpStatus.BAD_REQUEST,
+            message: `Fila ${rowNumber}: Cantidad debe ser un número entero`,
+          });
+        validRows.push(rowData);
+      } catch (error) {
+        errors.push(error.message);
+      }
+    });
+    const productIds = validRows.map((row) => row.productId);
+    const existingProducts = await this.productsRepository.find({
+      where: { id: In(productIds) },
+    });
+    const existingProductIds = existingProducts.map((p) => p.id);
+    const missingProducts = validRows.filter(
+      (row) => !existingProductIds.includes(row.productId),
+    );
+    missingProducts.forEach((row) => {
+      errors.push(
+        `Producto con ID ${row.productId} no encontrado en base de datos`,
+      );
+    });
+    const validatedProducts = validRows
+      .filter((row) => existingProductIds.includes(row.productId))
+      .map((row) => {
+        const product = existingProducts.find((p) => p.id === row.productId);
+        return {
+          productId: row.productId,
+          productName: product?.name, // Nombre desde la base de datos
+          newQuantity: row.newQuantity, // Stock actual desde la base de datos
+        };
+      });
+    return {
+      isValid: errors.length === 0,
+      errorCount: errors.length,
+      validProducts: errors.length === 0 ? validatedProducts : errors,
+    };
   }
 
   private async generateSku(
