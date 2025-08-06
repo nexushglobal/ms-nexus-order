@@ -9,6 +9,7 @@ export const formatProductResponse = (product: Product) => {
     sku: product.sku,
     memberPrice: product.memberPrice,
     publicPrice: product.publicPrice,
+    stock: product.stock,
     isActive: product.isActive,
     category: product.category
       ? {

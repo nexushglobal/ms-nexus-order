@@ -173,13 +173,7 @@ export class ProductsService {
   }
 
   private async findAllProducts(findProductsDto: FindProductsDto) {
-    const {
-      page = 1,
-      limit = 10,
-      name,
-      categoryId,
-      isActive,
-    } = findProductsDto;
+    const { name, categoryId, isActive } = findProductsDto;
     const queryBuilder = this.productsRepository
       .createQueryBuilder('product')
       .leftJoinAndSelect('product.category', 'category')
@@ -192,7 +186,6 @@ export class ProductsService {
       queryBuilder.andWhere('category.id = :categoryId', { categoryId });
     if (isActive !== undefined)
       queryBuilder.andWhere('product.isActive = :isActive', { isActive });
-    queryBuilder.skip((page - 1) * limit).take(limit);
     queryBuilder.addOrderBy('images.isMain', 'DESC');
     queryBuilder.addOrderBy('images.order', 'ASC');
     const [items, totalItems] = await queryBuilder.getManyAndCount();

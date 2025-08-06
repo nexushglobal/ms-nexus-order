@@ -35,13 +35,11 @@ export class ProductStockHistoryService {
   ) {}
 
   async findAllStockHistory(productId: number, paginationDto: PaginationDto) {
-    const { page = 1, limit = 10 } = paginationDto;
+    // const { page = 1, limit = 10 } = paginationDto;
     const queryBuilder = this.productStockHistoryRepository
       .createQueryBuilder('history')
       .where('history.product.id = :productId', { productId })
-      .orderBy('history.createdAt', 'DESC')
-      .skip((page - 1) * limit)
-      .take(limit);
+      .orderBy('history.createdAt', 'DESC');
 
     const stockHistory = await queryBuilder.getMany();
 
