@@ -5,12 +5,15 @@ import * as ExcelJS from 'exceljs';
 import { paginate } from 'src/common/helpers/paginate.helper';
 import { UsersService } from 'src/common/services/users.service';
 import { DataSource, In, Repository } from 'typeorm';
+import { AddBenefitDto, BenefitResponseDto } from '../dto/add-benefit.dto';
 import {
   CreateProductDto,
   CreateProductResponseDto,
 } from '../dto/create-product.dto';
 import { ExcelStockUpdateDto } from '../dto/excel-stock-update.dto';
+import { FindProductsClientDto } from '../dto/find-products-client.dto';
 import { FindProductsDto } from '../dto/find-products.dto';
+import { RemoveBenefitDto } from '../dto/remove-benefit.dto';
 import { UpdateProductDto } from '../dto/update-product.dto';
 import { ProductImage } from '../entities/product-image.entity';
 import { Product, ProductStatus } from '../entities/products.entity';
@@ -127,6 +130,28 @@ export class ProductsService {
     return productsList;
   }
 
+  async findAllWithClients(findProductsClientDto: FindProductsClientDto) {
+    const { page, limit } = findProductsClientDto;
+    const paginationDto = { page, limit };
+    const products = await this.findAllProducts({
+      ...findProductsClientDto,
+      isActive: true,
+    });
+    const { items } = products;
+    const formattedItems = items.map((product) => {
+      return {
+        ...formatProductResponse(product),
+        mainImage:
+          product.images && product.images.length > 0
+            ? product.images.find((img) => img.isMain)?.url ||
+              product.images[0].url
+            : null,
+      };
+    });
+    const productsList = paginate(formattedItems, paginationDto);
+    return productsList;
+  }
+
   async findOne(id: number) {
     const product = await this.findOneProduct(id);
     const formattedProduct = {
@@ -170,6 +195,68 @@ export class ProductsService {
       });
     const updatedProduct = await this.productsRepository.save(product);
     return formatUpdateProductResponse(updatedProduct);
+  }
+
+  async addBenefit(addBenefitDto: AddBenefitDto): Promise<BenefitResponseDto> {
+    const { productId, benefit } = addBenefitDto;
+    const product = await this.findOneProduct(productId);
+    // console.log(product);
+    const benefitExists = product.benefits.some(
+      (existingBenefit) =>
+        existingBenefit.toLowerCase() === benefit.toLowerCase(),
+    );
+
+    if (benefitExists)
+      throw new RpcException({
+        status: HttpStatus.CONFLICT,
+        message: 'El beneficio ya existe en este producto',
+      });
+    // Agregar el beneficio al array
+    const updatedBenefits = [...product.benefits, benefit];
+    // Actualizar el producto
+    const updatedProduct = await this.productsRepository.save({
+      ...product,
+      benefits: updatedBenefits,
+    });
+    return {
+      id: updatedProduct.id,
+      name: updatedProduct.name,
+      benefits: updatedProduct.benefits,
+      message: 'Beneficio agregado exitosamente',
+    };
+  }
+
+  async removeBenefit(
+    removeBenefitDto: RemoveBenefitDto,
+  ): Promise<BenefitResponseDto> {
+    const { productId, benefit } = removeBenefitDto;
+    // Verificar que el producto existe
+    const product = await this.findOneProduct(productId);
+    // Verificar que el beneficio existe en el producto
+    const benefitIndex = product.benefits.findIndex(
+      (existingBenefit) =>
+        existingBenefit.toLowerCase() === benefit.toLowerCase(),
+    );
+    if (benefitIndex === -1)
+      throw new RpcException({
+        status: HttpStatus.NOT_FOUND,
+        message: 'El beneficio no existe en este producto',
+      });
+    // Eliminar el beneficio del array
+    const updatedBenefits = product.benefits.filter(
+      (_, index) => index !== benefitIndex,
+    );
+    // Actualizar el producto
+    const updatedProduct = await this.productsRepository.save({
+      ...product,
+      benefits: updatedBenefits,
+    });
+    return {
+      id: updatedProduct.id,
+      name: updatedProduct.name,
+      benefits: updatedProduct.benefits,
+      message: 'Beneficio eliminado exitosamente',
+    };
   }
 
   private async findAllProducts(findProductsDto: FindProductsDto) {
@@ -224,7 +311,7 @@ export class ProductsService {
         message: 'Archivo no proporcionado',
       });
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(file.buffer);
+    await workbook.xlsx.load(file.buffer as any);
 
     const worksheet = workbook.worksheets[0];
     const errors: string[] = [];

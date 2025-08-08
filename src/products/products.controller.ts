@@ -5,11 +5,13 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
+import { AddBenefitDto } from './dto/add-benefit.dto';
 import { AddProductImageMessageDto } from './dto/add-product-image-message.dto';
 import { BulkCreateStockDto } from './dto/bulk-create-stock.dto';
 import { CreateProductMessageDto } from './dto/create-product-message.dto';
 import { DeleteProductImageMessageDto } from './dto/delete-product-image-message.dto';
 import { FindProductsDto } from './dto/find-products.dto';
+import { RemoveBenefitDto } from './dto/remove-benefit.dto';
 import { StockHistoryDto } from './dto/stock-history.dto';
 import { UpdateProductImageMessageDto } from './dto/update-product-image-message.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -141,5 +143,22 @@ export class ProductsController {
     const buffer = convertToBuffer(data.file.buffer);
     const multerFile = createMulterFile(data.file, buffer);
     return await this.productsService.validateStockExcel(multerFile);
+  }
+
+  @MessagePattern({ cmd: 'products.addBenefit' })
+  @UsePipes(new ValidationPipe({ transform: true }))
+  async addBenefit(@Payload() addBenefitDto: AddBenefitDto) {
+    return await this.productsService.addBenefit(addBenefitDto);
+  }
+
+  @MessagePattern({ cmd: 'products.removeBenefit' })
+  @UsePipes(new ValidationPipe({ transform: true }))
+  async removeBenefit(@Payload() removeBenefitDto: RemoveBenefitDto) {
+    return await this.productsService.removeBenefit(removeBenefitDto);
+  }
+
+  @MessagePattern({ cmd: 'products.findAllWithClients' })
+  async findAllWithClients(@Payload() findProductsDto: FindProductsDto) {
+    return this.productsService.findAllWithClients(findProductsDto);
   }
 }
