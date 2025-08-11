@@ -2,7 +2,10 @@ import { forwardRef, HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as ExcelJS from 'exceljs';
+import { Paginated } from 'src/common/dto/paginated.dto';
+import { MembershipStatus } from 'src/common/enums/status-membership.enum';
 import { paginate } from 'src/common/helpers/paginate.helper';
+import { MembershipService } from 'src/common/services/memberships.service';
 import { UsersService } from 'src/common/services/users.service';
 import { DataSource, In, Repository } from 'typeorm';
 import { AddBenefitDto, BenefitResponseDto } from '../dto/add-benefit.dto';
@@ -11,13 +14,21 @@ import {
   CreateProductResponseDto,
 } from '../dto/create-product.dto';
 import { ExcelStockUpdateDto } from '../dto/excel-stock-update.dto';
+import { FindOneProductClientResponseDto } from '../dto/find-one-product-client.dto';
+import { FindOneProductResponseDto } from '../dto/find-one-product.dto';
 import { FindProductsClientDto } from '../dto/find-products-client.dto';
-import { FindProductsDto } from '../dto/find-products.dto';
+import {
+  FindProductsDto,
+  FindProductsResponseDto,
+} from '../dto/find-products.dto';
 import { RemoveBenefitDto } from '../dto/remove-benefit.dto';
 import { UpdateProductDto } from '../dto/update-product.dto';
 import { ProductImage } from '../entities/product-image.entity';
 import { Product, ProductStatus } from '../entities/products.entity';
 import { formatCreateProductResponse } from '../helpers/format-create-product-response.helper';
+import { formatOneProducClientResponse } from '../helpers/format-one-product-client-response.helper';
+import { formatOneProductResponse } from '../helpers/format-one-product-response.helper';
+import { formatProductClientsResponse } from '../helpers/format-product-clients-response.helper';
 import { formatProductResponse } from '../helpers/format-product-response.helper';
 import { formatUpdateProductResponse } from '../helpers/format-update-product-response.helper';
 import { ProductCategoryService } from './product-category.service';
@@ -36,6 +47,7 @@ export class ProductsService {
     @Inject(forwardRef(() => ProductImageService))
     private readonly productImageService: ProductImageService,
     private readonly usersService: UsersService,
+    private readonly membershipService: MembershipService,
   ) {}
   async createProduct(
     createProductDto: CreateProductDto,
@@ -84,7 +96,6 @@ export class ProductsService {
 
       if (createProductDto.stock !== undefined && createProductDto.stock > 0) {
         const user = await this.usersService.getUser(userId);
-        await this.findOne(savedProduct.id);
         await this.productStockHistoryService.createInitialStock(
           {
             stock: createProductDto.stock,
@@ -101,31 +112,20 @@ export class ProductsService {
       return formatCreateProductResponse(savedProduct);
     } catch (error) {
       await queryRunner.rollbackTransaction();
-      // this.logger.error(`Error al crear producto: ${error.message}`);
       throw error;
     } finally {
       await queryRunner.release();
     }
   }
 
-  async findAll(findProductsDto: FindProductsDto) {
+  async findAll(
+    findProductsDto: FindProductsDto,
+  ): Promise<Paginated<FindProductsResponseDto>> {
     const { page, limit } = findProductsDto;
     const paginationDto = { page, limit };
     const products = await this.findAllProducts(findProductsDto);
     const { items } = products;
-    const formattedItems = items.map((product) => {
-      return {
-        ...formatProductResponse(product),
-        stock: product.stock,
-        status: product.status,
-        isActive: product.isActive,
-        mainImage:
-          product.images && product.images.length > 0
-            ? product.images.find((img) => img.isMain)?.url ||
-              product.images[0].url
-            : null,
-      };
-    });
+    const formattedItems = items.map(formatProductResponse);
     const productsList = paginate(formattedItems, paginationDto);
     return productsList;
   }
@@ -133,37 +133,49 @@ export class ProductsService {
   async findAllWithClients(findProductsClientDto: FindProductsClientDto) {
     const { page, limit } = findProductsClientDto;
     const paginationDto = { page, limit };
+    const userMemberbershipInfo =
+      await this.membershipService.getUserMembershipInfo(
+        findProductsClientDto.userId,
+      );
     const products = await this.findAllProducts({
       ...findProductsClientDto,
       isActive: true,
     });
     const { items } = products;
     const formattedItems = items.map((product) => {
-      return {
-        ...formatProductResponse(product),
-        mainImage:
-          product.images && product.images.length > 0
-            ? product.images.find((img) => img.isMain)?.url ||
-              product.images[0].url
-            : null,
-      };
+      if (userMemberbershipInfo.status === MembershipStatus.ACTIVE)
+        return formatProductClientsResponse(product);
+      else
+        return {
+          ...formatProductClientsResponse(product),
+          priceOff: null,
+          price: product.publicPrice,
+        };
     });
     const productsList = paginate(formattedItems, paginationDto);
     return productsList;
   }
 
-  async findOne(id: number) {
+  async findOne(id: number): Promise<FindOneProductResponseDto> {
     const product = await this.findOneProduct(id);
-    const formattedProduct = {
-      ...formatProductResponse(product),
-      images: product.images?.map((img) => ({
-        id: img.id,
-        url: img.url,
-        isMain: img.isMain,
-        order: img.order,
-      })),
-    };
-    return formattedProduct;
+    return formatOneProductResponse(product);
+  }
+
+  async findOneWithClients(
+    id: number,
+    userId: string,
+  ): Promise<FindOneProductClientResponseDto> {
+    const userMemberbershipInfo =
+      await this.membershipService.getUserMembershipInfo(userId);
+    const product = await this.findOneProduct(id);
+    if (userMemberbershipInfo.status === MembershipStatus.ACTIVE)
+      return formatOneProducClientResponse(product);
+    else
+      return {
+        ...formatOneProducClientResponse(product),
+        priceOff: null,
+        price: product.publicPrice,
+      };
   }
 
   async findAllWithSkuAndName() {

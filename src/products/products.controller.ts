@@ -10,6 +10,7 @@ import { AddProductImageMessageDto } from './dto/add-product-image-message.dto';
 import { BulkCreateStockDto } from './dto/bulk-create-stock.dto';
 import { CreateProductMessageDto } from './dto/create-product-message.dto';
 import { DeleteProductImageMessageDto } from './dto/delete-product-image-message.dto';
+import { FindProductsClientDto } from './dto/find-products-client.dto';
 import { FindProductsDto } from './dto/find-products.dto';
 import { RemoveBenefitDto } from './dto/remove-benefit.dto';
 import { StockHistoryDto } from './dto/stock-history.dto';
@@ -158,7 +159,15 @@ export class ProductsController {
   }
 
   @MessagePattern({ cmd: 'products.findAllWithClients' })
-  async findAllWithClients(@Payload() findProductsDto: FindProductsDto) {
+  async findAllWithClients(@Payload() findProductsDto: FindProductsClientDto) {
     return this.productsService.findAllWithClients(findProductsDto);
+  }
+
+  @MessagePattern({ cmd: 'products.findOneWithClients' })
+  async findOneWithClients(
+    @Payload('id', ParseIntPipe) id: number,
+    @Payload('userId') userId: string,
+  ) {
+    return this.productsService.findOneWithClients(id, userId);
   }
 }

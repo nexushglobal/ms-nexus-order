@@ -1,18 +1,17 @@
-import { FindProductsResponseDto } from '../dto/find-products.dto';
+import { FindOneProductClientResponseDto } from '../dto/find-one-product-client.dto';
 import { Product } from '../entities/products.entity';
 
-export const formatProductResponse = (
+export const formatOneProducClientResponse = (
   product: Product,
-): FindProductsResponseDto => {
+): FindOneProductClientResponseDto => {
   return {
     id: product.id,
     name: product.name,
     description: product.description,
     composition: product.composition,
     sku: product.sku,
-    memberPrice: product.memberPrice,
-    publicPrice: product.publicPrice,
-    stock: product.stock,
+    price: product.memberPrice,
+    priceOff: product.publicPrice,
     isActive: product.isActive,
     category: product.category
       ? {
@@ -22,10 +21,11 @@ export const formatProductResponse = (
         }
       : null,
     benefits: product.benefits,
-    imagesCount: product.images ? product.images.length : 0,
-    mainImage:
-      product.images && product.images.length > 0
-        ? product.images.find((img) => img.isMain)?.url || product.images[0].url
-        : null,
+    images: product.images?.map((img) => ({
+      id: img.id,
+      url: img.url,
+      isMain: img.isMain,
+      order: img.order,
+    })),
   };
 };

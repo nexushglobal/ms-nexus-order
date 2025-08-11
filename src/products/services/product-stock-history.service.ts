@@ -88,58 +88,74 @@ export class ProductStockHistoryService {
 
   async createStockHistory(stockHistoryDto: StockHistoryDto) {
     const { productId, userId } = stockHistoryDto;
-    const user = await this.usersService.getUser(userId);
-    const product = await this.productsService.findOneProduct(productId);
-    if (
-      stockHistoryDto.actionType === StockActionType.DECREASE &&
-      product.stock < stockHistoryDto.quantity
-    )
-      throw new RpcException({
-        status: HttpStatus.BAD_REQUEST,
-        message: `No se puede disminuir el stock por debajo de 0`,
-      });
 
-    let newStock: number;
-    let quantityChanged: number;
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    switch (stockHistoryDto.actionType) {
-      case StockActionType.INCREASE:
-        newStock = product.stock + stockHistoryDto.quantity;
-        quantityChanged = stockHistoryDto.quantity;
-        break;
-      case StockActionType.DECREASE:
-        newStock = product.stock - stockHistoryDto.quantity;
-        quantityChanged = -stockHistoryDto.quantity;
-        break;
-      case StockActionType.UPDATE:
-        newStock = stockHistoryDto.quantity;
-        quantityChanged = stockHistoryDto.quantity - product.stock;
-        break;
-      default:
+    try {
+      const user = await this.usersService.getUser(userId);
+      const product = await this.productsService.findOneProduct(productId);
+
+      if (
+        stockHistoryDto.actionType === StockActionType.DECREASE &&
+        product.stock < stockHistoryDto.quantity
+      )
         throw new RpcException({
-          status: HttpStatus.BAD_REQUEST, // 400
-          message: `Tipo de acción no válido. Debe ser INCREASE, DECREASE o UPDATE`,
+          status: HttpStatus.BAD_REQUEST,
+          message: `No se puede disminuir el stock por debajo de 0`,
         });
+
+      let newStock: number;
+      let quantityChanged: number;
+
+      switch (stockHistoryDto.actionType) {
+        case StockActionType.INCREASE:
+          newStock = product.stock + stockHistoryDto.quantity;
+          quantityChanged = stockHistoryDto.quantity;
+          break;
+        case StockActionType.DECREASE:
+          newStock = product.stock - stockHistoryDto.quantity;
+          quantityChanged = -stockHistoryDto.quantity;
+          break;
+        case StockActionType.UPDATE:
+          newStock = stockHistoryDto.quantity;
+          quantityChanged = stockHistoryDto.quantity - product.stock;
+          break;
+        default:
+          throw new RpcException({
+            status: HttpStatus.BAD_REQUEST,
+            message: `Tipo de acción no válido. Debe ser INCREASE, DECREASE o UPDATE`,
+          });
+      }
+
+      const stockHistory = this.productStockHistoryRepository.create({
+        product,
+        actionType: stockHistoryDto.actionType,
+        previousQuantity: product.stock,
+        newQuantity: newStock,
+        quantityChanged,
+        notes:
+          stockHistoryDto.description ||
+          this.getDefaultNote(stockHistoryDto.actionType),
+        userId: userId,
+        userEmail: user.email,
+        userName: user.nickname || '',
+      });
+      product.stock = newStock;
+
+      await queryRunner.manager.save(product);
+      await queryRunner.manager.save(stockHistory);
+
+      await queryRunner.commitTransaction();
+
+      return { message: 'Stock history created successfully' };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
     }
-    // Crear historial de stock
-    const stockHistory = this.productStockHistoryRepository.create({
-      product,
-      actionType: stockHistoryDto.actionType,
-      previousQuantity: product.stock,
-      newQuantity: newStock,
-      quantityChanged,
-      notes:
-        stockHistoryDto.description ||
-        this.getDefaultNote(stockHistoryDto.actionType),
-      userId: userId,
-      userEmail: user.email,
-      userName: user.nickname || '',
-    });
-    // Actualizar stock del producto
-    product.stock = newStock;
-    // Guardar cambios
-    await this.productStockHistoryRepository.save(stockHistory);
-    return { message: 'Stock history created successfully' };
   }
 
   async bulkUpdateStock(bulkCreateStockDto: BulkCreateStockDto) {

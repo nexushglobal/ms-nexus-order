@@ -1,9 +1,9 @@
-import { FindProductsResponseDto } from '../dto/find-products.dto';
+import { FindOneProductResponseDto } from '../dto/find-one-product.dto';
 import { Product } from '../entities/products.entity';
 
-export const formatProductResponse = (
+export const formatOneProductResponse = (
   product: Product,
-): FindProductsResponseDto => {
+): FindOneProductResponseDto => {
   return {
     id: product.id,
     name: product.name,
@@ -23,9 +23,11 @@ export const formatProductResponse = (
       : null,
     benefits: product.benefits,
     imagesCount: product.images ? product.images.length : 0,
-    mainImage:
-      product.images && product.images.length > 0
-        ? product.images.find((img) => img.isMain)?.url || product.images[0].url
-        : null,
+    images: product.images.map((img) => ({
+      id: img.id,
+      url: img.url,
+      isMain: img.isMain,
+      order: img.order,
+    })),
   };
 };

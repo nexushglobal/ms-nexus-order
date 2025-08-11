@@ -1,31 +1,31 @@
-import { Transform } from 'class-transformer';
 import { IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
+import { ProductImageResponseDto } from './find-one-product.dto';
 
-export class FindProductsClientDto extends PaginationDto {
+export class FindOneProductClientDto extends PaginationDto {
   @IsString()
   @IsNotEmpty({ message: 'El id del usuario es requerido' })
   userId: string;
 
   @IsOptional()
-  @IsString()
-  name?: string;
-
-  @IsOptional()
   @IsNumber()
-  @Transform(({ value }) => parseInt(value))
-  categoryId?: number;
+  id: string;
 }
 
-export class FindProductsClientResponseDto {
+export class FindOneProductClientResponseDto {
   id: number;
   name: string;
   sku: string;
+  description: string;
+  composition?: string;
   price: number;
   priceOff: number | null;
+  isActive: boolean;
   category: {
     id: number;
     name: string;
     code: string;
   } | null;
+  benefits: string[];
+  images: ProductImageResponseDto[] | null;
 }

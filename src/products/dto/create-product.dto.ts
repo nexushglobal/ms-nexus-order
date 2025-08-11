@@ -82,6 +82,8 @@ export class CreateProductResponseDto {
   name: string;
   sku: string;
   stock: number;
+  memberPrice: number;
+  publicPrice: number;
   status: string;
   images: {
     id: number;
