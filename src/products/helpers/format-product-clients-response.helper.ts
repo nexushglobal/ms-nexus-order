@@ -17,5 +17,9 @@ export const formatProductClientsResponse = (
       : null,
     price: product.memberPrice,
     priceOff: product.publicPrice,
+    mainImage:
+      product.images && product.images.length > 0
+        ? product.images.find((img) => img.isMain)?.url || product.images[0].url
+        : null,
   };
 };

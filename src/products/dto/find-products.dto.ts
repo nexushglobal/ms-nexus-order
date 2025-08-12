@@ -1,7 +1,6 @@
 import { Transform } from 'class-transformer';
 import { IsBoolean, IsNumber, IsOptional, IsString } from 'class-validator';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
-import { ProductImage } from '../entities/product-image.entity';
 
 export class FindProductsDto extends PaginationDto {
   @IsOptional()
@@ -40,5 +39,5 @@ export class FindProductsResponseDto {
   } | null;
   benefits: string[];
   imagesCount: number;
-  mainImage: string | ProductImage[] | null;
+  mainImage: string | null;
 }

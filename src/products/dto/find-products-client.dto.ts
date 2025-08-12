@@ -28,4 +28,5 @@ export class FindProductsClientResponseDto {
     name: string;
     code: string;
   } | null;
+  mainImage: string | null;
 }
