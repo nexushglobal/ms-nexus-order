@@ -197,10 +197,18 @@ export class OrdersService {
         totalItems,
         status: OrderStatus.PENDING,
         metadata: {
-          originalItems: dto.items,
+          productos: orderItemsWithPrices.map((item) => ({
+            SKU: item.product.id,
+            Nombre: item.product.name,
+            Cantidad: item.quantity,
+            Precio: item.price,
+          })),
         },
       });
-
+      // "SKU": "HEA-REN73026492",
+      // "Nombre": "RENEW COLLAGEN",
+      // "Cantidad": 3,
+      // "Precio": 99
       const savedOrder = await this.orderRepository.save(order);
 
       // 8. Crear registro de historial CREATED
@@ -249,7 +257,7 @@ export class OrdersService {
         },
         payments: dto.payments || [],
         files: files || [],
-        sourceId: dto.sourceId || '',
+        source_id: dto.source_id || '',
       });
       let finalStatus = OrderStatus.PENDING;
       let finalMessage =
@@ -273,16 +281,18 @@ export class OrdersService {
       return {
         orderId: savedOrder.id,
         paymentId: paymentResult.id,
-        status: finalStatus,
         totalAmount,
-        totalItems,
-        products: orderItemsWithPrices.map((item) => ({
-          productId: item.product.id,
-          productName: item.product.name,
-          quantity: item.quantity,
-          unitPrice: item.price,
-          total: item.total,
-        })),
+
+        order: {
+          totalItems,
+          items: orderItemsWithPrices.map((item) => ({
+            productId: item.product.id,
+            name: item.product.name,
+            quantity: item.quantity,
+          })),
+        },
+        status: finalStatus,
+
         message: finalMessage,
       };
     } catch (error) {
