@@ -52,7 +52,7 @@ export class Order {
   })
   totalAmount: number;
 
-  @Column({ default: 'PENDING' })
+  @Column({ default: OrderStatus.PENDING })
   status: OrderStatus;
 
   @Column({ type: 'json', nullable: true })

@@ -5,8 +5,10 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
+import { CreateOrderDto } from './dto/create-order.dto';
 import { FindAllOrdersAdminDto } from './dto/find-all-orders-admin.dto';
 import { FindAllOrdersClientDto } from './dto/find-all-orders-client.dto';
+import { OrderStatus } from './enums/orders-status.enum';
 import { OrdersService } from './orders.service';
 
 @Controller()
@@ -35,5 +37,31 @@ export class OrdersController {
   @MessagePattern({ cmd: 'orders.findOneWithClients' })
   async findOneWithClients(@Payload('orderId', ParseIntPipe) id: number) {
     return await this.ordersService.findOneWithClients(id);
+  }
+
+  @MessagePattern({ cmd: 'orders.createOrder' })
+  @UsePipes(new ValidationPipe({ transform: true }))
+  async createOrder(
+    @Payload() payload: { userId: string; dto: CreateOrderDto; files?: any[] },
+  ) {
+    return await this.ordersService.createOrder(payload);
+  }
+
+  @MessagePattern({ cmd: 'orders.markOrderAsSent' })
+  async markOrderAsSent(@Payload() data: { orderId: number }) {
+    return await this.ordersService.markOrderAsSent(data.orderId);
+  }
+  // Métodos internos llamados solo desde PaymentService (no endpoints públicos)
+  @MessagePattern({ cmd: 'orders.internal.updateOrderStatus' })
+  async updateOrderStatus(
+    @Payload()
+    data: {
+      orderId: number;
+      status: OrderStatus;
+      paymentId?: number;
+      rejectionReason?: string;
+    },
+  ) {
+    return await this.ordersService.updateOrderStatus(data);
   }
 }
