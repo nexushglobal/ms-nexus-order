@@ -115,182 +115,215 @@ export class OrdersService {
     dto: CreateOrderDto;
     files?: any[];
   }) {
-    try {
-      const { dto, files } = payload;
+    return await this.dataSource.transaction(async (transactionManager) => {
+      try {
+        const { dto, files } = payload;
 
-      // 1. Validaciones básicas
-      if (!dto.userEmail) {
-        throw new RpcException({
-          status: HttpStatus.BAD_REQUEST,
-          message: 'Email del usuario requerido',
-        });
-      }
-
-      if (!dto.items || dto.items.length === 0) {
-        throw new RpcException({
-          status: HttpStatus.BAD_REQUEST,
-          message: 'Debe incluir al menos un producto en la orden',
-        });
-      }
-      // 2. Validar productos y obtener información
-      const productIds = dto.items.map((item) => item.productId);
-      const products = await this.productRepository.find({
-        where: {
-          id: In(productIds),
-          isActive: true,
-        },
-      });
-      if (products.length !== productIds.length) {
-        const foundIds = products.map((p) => p.id);
-        const missingIds = productIds.filter((id) => !foundIds.includes(id));
-        throw new RpcException({
-          status: HttpStatus.BAD_REQUEST,
-          message: `Productos no encontrados o inactivos: ${missingIds.join(', ')}. Productos solicitados: [${productIds.join(', ')}]. Productos encontrados: [${foundIds.join(', ')}]`,
-        });
-      }
-
-      // 3. Solo validar que los productos existan (NO validar stock aquí)
-      for (const item of dto.items) {
-        const product = products.find((p) => p.id === item.productId);
-        if (!product) {
+        // 1. Validaciones básicas
+        if (!dto.userEmail) {
           throw new RpcException({
             status: HttpStatus.BAD_REQUEST,
-            message: `Producto con ID ${item.productId} no encontrado`,
+            message: 'Email del usuario requerido',
           });
         }
-      }
 
-      // 4. Calcular precios y totales (usar memberPrice como monolítico)
-      let totalAmount = 0;
-      const orderItemsWithPrices = dto.items.map((item) => {
-        const product = products.find((p) => p.id === item.productId)!;
-        const price = product.memberPrice; // Usar memberPrice directamente como monolítico
-        const itemTotal = price * item.quantity;
-        totalAmount += itemTotal;
-        return {
-          product,
-          quantity: item.quantity,
-          price,
-          total: itemTotal,
-        };
-      });
+        if (!dto.items || dto.items.length === 0) {
+          throw new RpcException({
+            status: HttpStatus.BAD_REQUEST,
+            message: 'Debe incluir al menos un producto en la orden',
+          });
+        }
 
-      const totalItems = dto.items.reduce(
-        (sum, item) => sum + item.quantity,
-        0,
-      );
-
-      // 6. Validar que el totalAmount coincide con el calculado
-      if (dto.totalAmount && Math.abs(dto.totalAmount - totalAmount) > 0.01) {
-        throw new RpcException({
-          status: HttpStatus.BAD_REQUEST,
-          message: `El monto total proporcionado (${dto.totalAmount}) no coincide con el monto calculado (${totalAmount})`,
+        // 2. Validar productos y obtener información
+        const productIds = dto.items.map((item) => item.productId);
+        const products = await transactionManager.find(Product, {
+          where: {
+            id: In(productIds),
+            isActive: true,
+          },
         });
-      }
 
-      // 7. Crear la orden en estado PENDING
-      const order = this.orderRepository.create({
-        userId: dto.userId,
-        userEmail: dto.userEmail,
-        userName: dto.userName,
-        totalAmount,
-        totalItems,
-        status: OrderStatus.PENDING,
-        metadata: {
-          originalItems: dto.items,
-        },
-      });
+        if (products.length !== productIds.length) {
+          const foundIds = products.map((p) => p.id);
+          const missingIds = productIds.filter((id) => !foundIds.includes(id));
+          throw new RpcException({
+            status: HttpStatus.BAD_REQUEST,
+            message: `Productos no encontrados o inactivos: ${missingIds.join(', ')}. Productos solicitados: [${productIds.join(', ')}]. Productos encontrados: [${foundIds.join(', ')}]`,
+          });
+        }
 
-      const savedOrder = await this.orderRepository.save(order);
+        // 3. Solo validar que los productos existan
+        for (const item of dto.items) {
+          const product = products.find((p) => p.id === item.productId);
+          if (!product) {
+            throw new RpcException({
+              status: HttpStatus.BAD_REQUEST,
+              message: `Producto con ID ${item.productId} no encontrado`,
+            });
+          }
+        }
 
-      // 8. Crear registro de historial CREATED
-      await this.createOrderHistoryRecord(
-        savedOrder,
-        OrderAction.CREATED,
-        { items: dto.items, totalAmount, totalItems },
-        'Orden creada exitosamente',
-        {
-          paymentMethod: dto.paymentMethod,
-        },
-      );
+        // 4. Calcular precios y totales
+        let totalAmount = 0;
+        const orderItemsWithPrices = dto.items.map((item) => {
+          const product = products.find((p) => p.id === item.productId)!;
+          const price = product.memberPrice;
+          const itemTotal = price * item.quantity;
+          totalAmount += itemTotal;
+          return {
+            product,
+            quantity: item.quantity,
+            price,
+            total: itemTotal,
+          };
+        });
 
-      // 9. Crear OrdersDetails con productos reales
-      const orderDetails = orderItemsWithPrices.map((item) =>
-        this.ordersDetailsRepository.create({
+        const totalItems = dto.items.reduce(
+          (sum, item) => sum + item.quantity,
+          0,
+        );
+
+        // 5. Validar que el totalAmount coincide con el calculado
+        if (dto.totalAmount && Math.abs(dto.totalAmount - totalAmount) > 0.01) {
+          throw new RpcException({
+            status: HttpStatus.BAD_REQUEST,
+            message: `El monto total proporcionado (${dto.totalAmount}) no coincide con el monto calculado (${totalAmount})`,
+          });
+        }
+
+        // 6. Crear la orden en estado PENDING dentro de la transacción
+        const order = transactionManager.create(Order, {
+          userId: dto.userId,
+          userEmail: dto.userEmail,
+          userName: dto.userName,
+          totalAmount,
+          totalItems,
+          status: OrderStatus.PENDING,
+          metadata: {
+            originalItems: dto.items,
+          },
+        });
+
+        const savedOrder = await transactionManager.save(Order, order);
+
+        // 7. Crear OrdersDetails dentro de la transacción
+        const orderDetails = orderItemsWithPrices.map((item) =>
+          transactionManager.create(OrdersDetails, {
+            order: savedOrder,
+            product: item.product,
+            quantity: item.quantity,
+            price: item.price,
+          }),
+        );
+
+        await transactionManager.save(OrdersDetails, orderDetails);
+
+        // 8. Crear registro de historial dentro de la transacción
+        const historyRecord = transactionManager.create(OrderHistory, {
           order: savedOrder,
-          product: item.product,
-          quantity: item.quantity,
-          price: item.price,
-        }),
-      );
+          userId: savedOrder.userId,
+          userEmail: savedOrder.userEmail,
+          userName: savedOrder.userName,
+          action: OrderAction.CREATED,
+          changes: { items: dto.items, totalAmount, totalItems },
+          notes: 'Orden creada exitosamente',
+          metadata: { paymentMethod: dto.paymentMethod },
+        });
 
-      await this.ordersDetailsRepository.save(orderDetails);
+        await transactionManager.save(OrderHistory, historyRecord);
 
-      // 10. Llamar al servicio de payment (sin tocar stock)
-      const paymentResult = await this.paymentService.createPayment({
-        userId: dto.userId,
-        userEmail: dto.userEmail,
-        username: dto.userName || 'Usuario',
-        paymentConfig: 'ORDER_PAYMENT',
-        amount: totalAmount,
-        status: 'PENDING',
-        paymentMethod: dto.paymentMethod,
-        relatedEntityType: 'ORDER',
-        relatedEntityId: savedOrder.id,
-        metadata: {
+        // 9. Llamar al servicio de payment - SI ESTO FALLA, LA TRANSACCIÓN SE REVIERTE
+        const paymentResult = await this.paymentService.createPayment({
+          userId: dto.userId,
+          userEmail: dto.userEmail,
+          username: dto.userName || 'Usuario',
+          paymentConfig: 'ORDER_PAYMENT',
+          amount: totalAmount,
+          status: 'PENDING',
+          paymentMethod: dto.paymentMethod,
+          relatedEntityType: 'ORDER',
+          relatedEntityId: savedOrder.id,
+          metadata: {
+            orderId: savedOrder.id,
+            totalItems,
+            products: orderItemsWithPrices.map((item) => ({
+              productId: item.product.id,
+              productName: item.product.name,
+              quantity: item.quantity,
+              price: item.price,
+            })),
+          },
+          payments: dto.payments || [],
+          files: files || [],
+          sourceId: dto.sourceId || '',
+        });
+
+        // 10. Verificar que el pago se creó correctamente
+        if (!paymentResult || !paymentResult.id) {
+          throw new RpcException({
+            status: HttpStatus.BAD_REQUEST,
+            message: 'Error creando el pago. Transacción cancelada.',
+          });
+        }
+
+        // 11. Si es pago con puntos y fue exitoso, actualizar el status
+        let finalStatus = OrderStatus.PENDING;
+        let finalMessage =
+          'Orden creada exitosamente, pendiente de aprobación de pago';
+
+        if (
+          dto.paymentMethod === PaymentMethod.POINTS &&
+          paymentResult.success
+        ) {
+          // Actualizar la orden dentro de la transacción
+          savedOrder.status = OrderStatus.APPROVED;
+          await transactionManager.save(Order, savedOrder);
+
+          // Crear historial de aprobación dentro de la transacción
+          const approvalHistoryRecord = transactionManager.create(
+            OrderHistory,
+            {
+              order: savedOrder,
+              userId: savedOrder.userId,
+              userEmail: savedOrder.userEmail,
+              userName: savedOrder.userName,
+              action: OrderAction.APPROVED,
+              changes: { paymentId: paymentResult.id },
+              notes: 'Orden aprobada automáticamente por pago con puntos',
+              metadata: {},
+            },
+          );
+
+          await transactionManager.save(OrderHistory, approvalHistoryRecord);
+
+          finalStatus = OrderStatus.APPROVED;
+          finalMessage = 'Orden creada y aprobada automáticamente con puntos';
+        }
+
+        // 12. Si llegamos aquí, todo fue exitoso
+        return {
           orderId: savedOrder.id,
+          paymentId: paymentResult.id,
+          status: finalStatus,
+          totalAmount,
           totalItems,
           products: orderItemsWithPrices.map((item) => ({
             productId: item.product.id,
             productName: item.product.name,
             quantity: item.quantity,
-            price: item.price,
+            unitPrice: item.price,
+            total: item.total,
           })),
-        },
-        payments: dto.payments || [],
-        files: files || [],
-        sourceId: dto.sourceId || '',
-      });
-      let finalStatus = OrderStatus.PENDING;
-      let finalMessage =
-        'Orden creada exitosamente, pendiente de aprobación de pago';
-
-      if (dto.paymentMethod === PaymentMethod.POINTS && paymentResult.success) {
-        // Actualizar la orden en la base de datos
-        savedOrder.status = OrderStatus.APPROVED;
-        await this.orderRepository.save(savedOrder);
-        // Crear historial de aprobación
-        await this.createOrderHistoryRecord(
-          savedOrder,
-          OrderAction.APPROVED,
-          { paymentId: paymentResult.id },
-          'Orden aprobada automáticamente por pago con puntos',
-        );
-        finalStatus = OrderStatus.APPROVED;
-        finalMessage = 'Orden creada y aprobada automáticamente con puntos';
+          message: finalMessage,
+        };
+      } catch (error) {
+        // Si hay cualquier error, la transacción se revierte automáticamente
+        throw new RpcException({
+          status: HttpStatus.INTERNAL_SERVER_ERROR,
+          message: `Error creando orden: ${error.message}`,
+        });
       }
-
-      return {
-        orderId: savedOrder.id,
-        paymentId: paymentResult.id,
-        status: finalStatus,
-        totalAmount,
-        totalItems,
-        products: orderItemsWithPrices.map((item) => ({
-          productId: item.product.id,
-          productName: item.product.name,
-          quantity: item.quantity,
-          unitPrice: item.price,
-          total: item.total,
-        })),
-        message: finalMessage,
-      };
-    } catch (error) {
-      throw new RpcException({
-        status: HttpStatus.INTERNAL_SERVER_ERROR,
-        message: `Error creando orden: ${error.message}`,
-      });
-    }
+    });
   }
 
   // Métodos internos llamados solo desde PaymentService
