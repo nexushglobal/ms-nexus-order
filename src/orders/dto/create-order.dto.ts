@@ -84,7 +84,7 @@ export class CreateOrderDto {
   // Para método PAYMENT_GATEWAY
   @IsOptional()
   @IsString()
-  sourceId?: string;
+  source_id?: string;
 }
 
 export class CreateOrderPayload {

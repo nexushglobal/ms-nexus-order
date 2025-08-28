@@ -200,7 +200,12 @@ export class OrdersService {
           totalItems,
           status: OrderStatus.PENDING,
           metadata: {
-            originalItems: dto.items,
+            productos: orderItemsWithPrices.map((item) => ({
+              SKU: item.product.id,
+              Nombre: item.product.name,
+              Cantidad: item.quantity,
+              Precio: item.price,
+            })),
           },
         });
 
@@ -255,7 +260,7 @@ export class OrdersService {
           },
           payments: dto.payments || [],
           files: files || [],
-          sourceId: dto.sourceId || '',
+          source_id: dto.source_id || '',
         });
 
         // 10. Verificar que el pago se creó correctamente
@@ -304,16 +309,16 @@ export class OrdersService {
         return {
           orderId: savedOrder.id,
           paymentId: paymentResult.id,
-          status: finalStatus,
           totalAmount,
-          totalItems,
-          products: orderItemsWithPrices.map((item) => ({
-            productId: item.product.id,
-            productName: item.product.name,
-            quantity: item.quantity,
-            unitPrice: item.price,
-            total: item.total,
-          })),
+          order: {
+            totalItems,
+            items: orderItemsWithPrices.map((item) => ({
+              productId: item.product.id,
+              name: item.product.name,
+              quantity: item.quantity,
+            })),
+          },
+          status: finalStatus,
           message: finalMessage,
         };
       } catch (error) {
