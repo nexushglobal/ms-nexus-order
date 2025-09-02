@@ -10,6 +10,10 @@ import { DataSource, In, Repository } from 'typeorm';
 import { CreateOrderDto, PaymentMethod } from './dto/create-order.dto';
 import { FindAllOrdersAdminDto } from './dto/find-all-orders-admin.dto';
 import { FindAllOrdersClientDto } from './dto/find-all-orders-client.dto';
+import {
+  UserOrderSummaryDto,
+  UserPeriodOrderDto,
+} from './dto/find-user-orders-by-period.dto';
 import { OrdersDetails } from './entities/orders-details.entity';
 import { OrderHistory } from './entities/orders-history.entity';
 import { Order } from './entities/orders.entity';
@@ -705,6 +709,51 @@ export class OrdersService {
       throw new RpcException({
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         message: `Error al marcar orden ${orderId} como enviada: ${error.message}`,
+      });
+    }
+  }
+
+  async findUserOrdersByPeriod(users: UserPeriodOrderDto[]) {
+    try {
+      const usersOrdersSummary: UserOrderSummaryDto[] = [];
+
+      for (const userPeriod of users) {
+        const { userId, startDate, endDate } = userPeriod;
+
+        // Buscar órdenes aprobadas del usuario en el periodo específico
+        const orders = await this.orderRepository
+          .createQueryBuilder('order')
+          .where('order.userId = :userId', { userId })
+          .andWhere('order.status = :status', { status: OrderStatus.APPROVED })
+          .andWhere('order.createdAt BETWEEN :startDate AND :endDate', {
+            startDate: new Date(startDate),
+            endDate: new Date(endDate),
+          })
+          .getMany();
+
+        // Calcular el total
+        const totalAmount = orders.reduce(
+          (sum, order) => sum + order.totalAmount,
+          0,
+        );
+        const orderCount = orders.length;
+        const meetsMinimumAmount = totalAmount >= 300;
+
+        usersOrdersSummary.push({
+          userId,
+          totalAmount,
+          orderCount,
+          meetsMinimumAmount,
+        });
+      }
+      return {
+        usersOrdersSummary,
+        totalUsersProcessed: users.length,
+      };
+    } catch (error) {
+      throw new RpcException({
+        status: HttpStatus.INTERNAL_SERVER_ERROR,
+        message: `Error al consultar órdenes por periodo: ${error.message}`,
       });
     }
   }

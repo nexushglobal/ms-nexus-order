@@ -8,6 +8,7 @@ import { MessagePattern, Payload } from '@nestjs/microservices';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { FindAllOrdersAdminDto } from './dto/find-all-orders-admin.dto';
 import { FindAllOrdersClientDto } from './dto/find-all-orders-client.dto';
+import { FindUserOrdersByPeriodDto } from './dto/find-user-orders-by-period.dto';
 import { OrderStatus } from './enums/orders-status.enum';
 import { OrdersService } from './orders.service';
 
@@ -63,5 +64,11 @@ export class OrdersController {
     },
   ) {
     return await this.ordersService.updateOrderStatus(data);
+  }
+
+  @MessagePattern({ cmd: 'orders.findUserOrdersByPeriod' })
+  @UsePipes(new ValidationPipe({ transform: true }))
+  async findUserOrdersByPeriod(@Payload() dto: FindUserOrdersByPeriodDto) {
+    return await this.ordersService.findUserOrdersByPeriod(dto.users);
   }
 }
