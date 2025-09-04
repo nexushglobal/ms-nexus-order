@@ -31,6 +31,7 @@ export class FindProductsResponseDto {
   memberPrice: number;
   publicPrice: number;
   stock: number;
+  status?: string;
   isActive: boolean;
   category: {
     id: number;

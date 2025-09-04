@@ -11,6 +11,7 @@ export const formatProductResponse = (
     composition: product.composition,
     sku: product.sku,
     memberPrice: product.memberPrice,
+    status: product.status,
     publicPrice: product.publicPrice,
     stock: product.stock,
     isActive: product.isActive,
