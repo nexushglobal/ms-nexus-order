@@ -119,235 +119,210 @@ export class OrdersService {
     dto: CreateOrderDto;
     files?: any[];
   }) {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
     try {
-      return await this.dataSource.transaction(async (transactionManager) => {
-        try {
-          const { dto, files } = payload;
+      const { dto, files } = payload;
+      // 2. Validar productos y obtener información
+      const productIds = dto.items.map((item) => item.productId);
+      const products = await queryRunner.manager.find(Product, {
+        where: {
+          id: In(productIds),
+          isActive: true,
+        },
+      });
 
-          // 1. Validaciones básicas
-          if (!dto.userEmail) {
-            throw new RpcException({
-              status: HttpStatus.BAD_REQUEST,
-              message: 'Email del usuario requerido',
-            });
-          }
+      if (products.length !== productIds.length) {
+        const foundIds = products.map((p) => p.id);
+        const missingIds = productIds.filter((id) => !foundIds.includes(id));
+        throw new RpcException({
+          status: HttpStatus.BAD_REQUEST,
+          message: `Productos no encontrados o inactivos: ${missingIds.join(', ')}`,
+        });
+      }
 
-          if (!dto.items || dto.items.length === 0) {
-            throw new RpcException({
-              status: HttpStatus.BAD_REQUEST,
-              message: 'Debe incluir al menos un producto en la orden',
-            });
-          }
-
-          // 2. Validar productos y obtener información
-          const productIds = dto.items.map((item) => item.productId);
-          const products = await transactionManager.find(Product, {
-            where: {
-              id: In(productIds),
-              isActive: true,
-            },
-          });
-
-          if (products.length !== productIds.length) {
-            const foundIds = products.map((p) => p.id);
-            const missingIds = productIds.filter(
-              (id) => !foundIds.includes(id),
-            );
-            throw new RpcException({
-              status: HttpStatus.BAD_REQUEST,
-              message: `Productos no encontrados o inactivos: ${missingIds.join(', ')}. Productos solicitados: [${productIds.join(', ')}]. Productos encontrados: [${foundIds.join(', ')}]`,
-            });
-          }
-
-          // 3. Solo validar que los productos existan
-          for (const item of dto.items) {
-            const product = products.find((p) => p.id === item.productId);
-            if (!product) {
-              throw new RpcException({
-                status: HttpStatus.BAD_REQUEST,
-                message: `Producto con ID ${item.productId} no encontrado`,
-              });
-            }
-          }
-
-          // 4. Calcular precios y totales
-          let totalAmount = 0;
-          const orderItemsWithPrices = dto.items.map((item) => {
-            const product = products.find((p) => p.id === item.productId)!;
-            const price = product.memberPrice;
-            const itemTotal = price * item.quantity;
-            totalAmount += itemTotal;
-            return {
-              product,
-              quantity: item.quantity,
-              price,
-              total: itemTotal,
-            };
-          });
-
-          const totalItems = dto.items.reduce(
-            (sum, item) => sum + item.quantity,
-            0,
-          );
-
-          // 5. Validar que el totalAmount coincide con el calculado
-          if (
-            dto.totalAmount &&
-            Math.abs(dto.totalAmount - totalAmount) > 0.01
-          ) {
-            throw new RpcException({
-              status: HttpStatus.BAD_REQUEST,
-              message: `El monto total proporcionado (${dto.totalAmount}) no coincide con el monto calculado (${totalAmount})`,
-            });
-          }
-
-          // 6. Crear la orden en estado PENDING dentro de la transacción
-          const order = transactionManager.create(Order, {
-            userId: dto.userId,
-            userEmail: dto.userEmail,
-            userName: dto.userName,
-            totalAmount,
-            totalItems,
-            status: OrderStatus.PENDING,
-            metadata: {
-              productos: orderItemsWithPrices.map((item) => ({
-                SKU: item.product.id,
-                Nombre: item.product.name,
-                Cantidad: item.quantity,
-                Precio: item.price,
-              })),
-            },
-          });
-
-          const savedOrder = await transactionManager.save(Order, order);
-
-          // 7. Crear OrdersDetails dentro de la transacción
-          const orderDetails = orderItemsWithPrices.map((item) =>
-            transactionManager.create(OrdersDetails, {
-              order: savedOrder,
-              product: item.product,
-              quantity: item.quantity,
-              price: item.price,
-            }),
-          );
-
-          await transactionManager.save(OrdersDetails, orderDetails);
-
-          // 8. Crear registro de historial dentro de la transacción
-          const historyRecord = transactionManager.create(OrderHistory, {
-            order: savedOrder,
-            userId: savedOrder.userId,
-            userEmail: savedOrder.userEmail,
-            userName: savedOrder.userName,
-            action: OrderAction.CREATED,
-            changes: { items: dto.items, totalAmount, totalItems },
-            notes: 'Orden creada exitosamente',
-            metadata: { paymentMethod: dto.paymentMethod },
-          });
-
-          await transactionManager.save(OrderHistory, historyRecord);
-
-          // 9. Llamar al servicio de payment - SI ESTO FALLA, LA TRANSACCIÓN SE REVIERTE
-          const paymentResult: {
-            success: boolean;
-            paymentId: number;
-          } = await this.paymentService.createPayment({
-            userId: dto.userId,
-            userEmail: dto.userEmail,
-            username: dto.userName || 'Usuario',
-            paymentConfig: 'ORDER_PAYMENT',
-            amount: totalAmount,
-            status: 'PENDING',
-            paymentMethod: dto.paymentMethod,
-            relatedEntityType: 'ORDER',
-            relatedEntityId: savedOrder.id,
-            metadata: {
-              orderId: savedOrder.id,
-              totalItems,
-              products: orderItemsWithPrices.map((item) => ({
-                productId: item.product.id,
-                productName: item.product.name,
-                quantity: item.quantity,
-                price: item.price,
-              })),
-            },
-            payments: dto.payments || [],
-            files: files || [],
-            source_id: dto.source_id || '',
-          });
-
-          // 10. Verificar que el pago se creó correctamente
-          if (!paymentResult || !paymentResult.paymentId) {
-            throw new RpcException({
-              status: HttpStatus.BAD_REQUEST,
-              message: 'Error creando el pago. Transacción cancelada.',
-            });
-          }
-
-          // 11. Si es pago con puntos y fue exitoso, actualizar el status
-          let finalStatus = OrderStatus.PENDING;
-          let finalMessage =
-            'Orden creada exitosamente, pendiente de aprobación de pago';
-
-          if (
-            dto.paymentMethod === PaymentMethod.POINTS &&
-            paymentResult.success
-          ) {
-            // Actualizar la orden dentro de la transacción
-            savedOrder.status = OrderStatus.APPROVED;
-            await transactionManager.save(Order, savedOrder);
-
-            // Crear historial de aprobación dentro de la transacción
-            const approvalHistoryRecord = transactionManager.create(
-              OrderHistory,
-              {
-                order: savedOrder,
-                userId: savedOrder.userId,
-                userEmail: savedOrder.userEmail,
-                userName: savedOrder.userName,
-                action: OrderAction.APPROVED,
-                changes: { paymentId: paymentResult.paymentId },
-                notes: 'Orden aprobada automáticamente por pago con puntos',
-                metadata: {},
-              },
-            );
-
-            await transactionManager.save(OrderHistory, approvalHistoryRecord);
-
-            finalStatus = OrderStatus.APPROVED;
-            finalMessage = 'Orden creada y aprobada automáticamente con puntos';
-          }
-
-          // 12. Si llegamos aquí, todo fue exitoso
-          return {
-            orderId: savedOrder.id,
-            paymentId: paymentResult.paymentId,
-            totalAmount,
-            order: {
-              totalItems,
-              items: orderItemsWithPrices.map((item) => ({
-                productId: item.product.id,
-                name: item.product.name,
-                quantity: item.quantity,
-              })),
-            },
-            status: finalStatus,
-            message: finalMessage,
-          };
-        } catch (error) {
-          // Si hay cualquier error, la transacción se revierte automáticamente
+      // 3. Validar que los productos existan
+      for (const item of dto.items) {
+        const product = products.find((p) => p.id === item.productId);
+        if (!product) {
           throw new RpcException({
-            status: HttpStatus.INTERNAL_SERVER_ERROR,
-            message: `Error creando orden: ${error.message}`,
+            status: HttpStatus.BAD_REQUEST,
+            message: `Producto con ID ${item.productId} no encontrado`,
           });
         }
+      }
+
+      // 4. Calcular precios y totales
+      let totalAmount = 0;
+      const orderItemsWithPrices = dto.items.map((item) => {
+        const product = products.find((p) => p.id === item.productId)!;
+        const price = product.memberPrice;
+        const itemTotal = price * item.quantity;
+        totalAmount += itemTotal;
+        return {
+          product,
+          quantity: item.quantity,
+          price,
+          total: itemTotal,
+        };
       });
+
+      const totalItems = dto.items.reduce(
+        (sum, item) => sum + item.quantity,
+        0,
+      );
+
+      // 5. Validar que el totalAmount coincide con el calculado
+      if (dto.totalAmount && Math.abs(dto.totalAmount - totalAmount) > 0.01) {
+        throw new RpcException({
+          status: HttpStatus.BAD_REQUEST,
+          message: `El monto total proporcionado (${dto.totalAmount}) no coincide con el calculado (${totalAmount})`,
+        });
+      }
+
+      // 6. Crear la orden en estado PENDING (AÚN NO CONFIRMADA)
+      const order = queryRunner.manager.create(Order, {
+        userId: dto.userId,
+        userEmail: dto.userEmail,
+        userName: dto.userName,
+        totalAmount,
+        totalItems,
+        status: OrderStatus.PENDING,
+        metadata: {
+          productos: orderItemsWithPrices.map((item) => ({
+            SKU: item.product.id,
+            Nombre: item.product.name,
+            Cantidad: item.quantity,
+            Precio: item.price,
+          })),
+        },
+      });
+
+      const savedOrder = await queryRunner.manager.save(Order, order);
+
+      // 7. Crear OrdersDetails (AÚN NO CONFIRMADOS)
+      const orderDetails = orderItemsWithPrices.map((item) =>
+        queryRunner.manager.create(OrdersDetails, {
+          order: savedOrder,
+          product: item.product,
+          quantity: item.quantity,
+          price: item.price,
+        }),
+      );
+
+      await queryRunner.manager.save(OrdersDetails, orderDetails);
+
+      // 8. Crear registro de historial (AÚN NO CONFIRMADO)
+      const historyRecord = queryRunner.manager.create(OrderHistory, {
+        order: savedOrder,
+        userId: savedOrder.userId,
+        userEmail: savedOrder.userEmail,
+        userName: savedOrder.userName,
+        action: OrderAction.CREATED,
+        changes: { items: dto.items, totalAmount, totalItems },
+        notes: 'Orden creada exitosamente',
+        metadata: { paymentMethod: dto.paymentMethod },
+      });
+
+      await queryRunner.manager.save(OrderHistory, historyRecord);
+
+      // 9. PUNTO CRÍTICO: Procesar pago (llamada externa)
+      const paymentResult: {
+        success: boolean;
+        paymentId: number;
+      } = await this.paymentService.createPayment({
+        userId: dto.userId,
+        userEmail: dto.userEmail,
+        username: dto.userName || 'Usuario',
+        paymentConfig: 'ORDER_PAYMENT',
+        amount: totalAmount,
+        status: 'PENDING',
+        paymentMethod: dto.paymentMethod,
+        relatedEntityType: 'ORDER',
+        relatedEntityId: savedOrder.id,
+        metadata: {
+          orderId: savedOrder.id,
+          totalItems,
+          products: orderItemsWithPrices.map((item) => ({
+            productId: item.product.id,
+            productName: item.product.name,
+            quantity: item.quantity,
+            price: item.price,
+          })),
+        },
+        payments: dto.payments || [],
+        files: files || [],
+        source_id: dto.source_id || '',
+      });
+
+      // 10. Validar el resultado del pago
+      if (!paymentResult || !paymentResult.paymentId)
+        throw new RpcException({
+          status: HttpStatus.BAD_REQUEST,
+          message: 'Error creando el pago. Transacción cancelada.',
+        });
+
+      // 12. Si es pago con puntos exitoso, actualizar estado
+      let finalStatus = OrderStatus.PENDING;
+      let finalMessage =
+        'Orden creada exitosamente, pendiente de aprobación de pago';
+
+      if (dto.paymentMethod === PaymentMethod.POINTS && paymentResult.success) {
+        // Actualizar la orden a APPROVED
+        savedOrder.status = OrderStatus.APPROVED;
+        await queryRunner.manager.save(Order, savedOrder);
+
+        // Crear historial de aprobación
+        const approvalHistoryRecord = queryRunner.manager.create(OrderHistory, {
+          order: savedOrder,
+          userId: savedOrder.userId,
+          userEmail: savedOrder.userEmail,
+          userName: savedOrder.userName,
+          action: OrderAction.APPROVED,
+          changes: { paymentId: paymentResult.paymentId },
+          notes: 'Orden aprobada automáticamente por pago con puntos',
+          metadata: {},
+        });
+
+        await queryRunner.manager.save(OrderHistory, approvalHistoryRecord);
+
+        finalStatus = OrderStatus.APPROVED;
+        finalMessage = 'Orden creada y aprobada automáticamente con puntos';
+      }
+
+      // 13. CONFIRMAR TODA LA TRANSACCIÓN (Solo aquí se persiste en BD)
+      await queryRunner.commitTransaction();
+
+      // 14. Retornar resultado exitoso
+      return {
+        orderId: savedOrder.id,
+        paymentId: paymentResult.paymentId,
+        totalAmount,
+        order: {
+          totalItems,
+          items: orderItemsWithPrices.map((item) => ({
+            productId: item.product.id,
+            name: item.product.name,
+            quantity: item.quantity,
+          })),
+        },
+        status: finalStatus,
+        message: finalMessage,
+      };
     } catch (error) {
-      console.error('Error creando la orden:', error);
+      // ROLLBACK: Si cualquier cosa falla, revertir todo
+      await queryRunner.rollbackTransaction();
+
+      console.error('Error creando orden:', error);
       throw new RpcException({
         status: error.status || HttpStatus.INTERNAL_SERVER_ERROR,
         message: error.message || 'Error inesperado creando la orden',
       });
+    } finally {
+      // Liberar conexión
+      await queryRunner.release();
     }
   }
 
