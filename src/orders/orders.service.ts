@@ -191,8 +191,9 @@ export class OrdersService {
         totalItems,
         status: OrderStatus.PENDING,
         metadata: {
-          productos: orderItemsWithPrices.map((item) => ({
-            SKU: item.product.id,
+          notes: dto.notes || 'Estoy consumiendo estos productos',
+          Productos: orderItemsWithPrices.map((item) => ({
+            SKU: item.product.sku,
             Nombre: item.product.name,
             Cantidad: item.quantity,
             Precio: item.price,

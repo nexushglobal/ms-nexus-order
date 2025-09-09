@@ -74,6 +74,10 @@ export class CreateOrderDto {
   @IsEnum(PaymentMethod)
   paymentMethod: PaymentMethod;
 
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
   // Para método VOUCHER
   @IsOptional()
   @IsArray()
