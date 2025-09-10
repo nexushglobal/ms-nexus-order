@@ -123,6 +123,8 @@ export class OrdersService {
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
+    let savedOrder: Order | null = null; // Declarar fuera del try para acceso en catch
+
     try {
       const { dto, files } = payload;
       // 2. Validar productos y obtener información
@@ -201,12 +203,12 @@ export class OrdersService {
         },
       });
 
-      const savedOrder = await queryRunner.manager.save(Order, order);
+      savedOrder = await queryRunner.manager.save(Order, order);
 
       // 7. Crear OrdersDetails (AÚN NO CONFIRMADOS)
       const orderDetails = orderItemsWithPrices.map((item) =>
         queryRunner.manager.create(OrdersDetails, {
-          order: savedOrder,
+          order: savedOrder!,
           product: item.product,
           quantity: item.quantity,
           price: item.price,
@@ -217,7 +219,7 @@ export class OrdersService {
 
       // 8. Crear registro de historial (AÚN NO CONFIRMADO)
       const historyRecord = queryRunner.manager.create(OrderHistory, {
-        order: savedOrder,
+        order: savedOrder, // Non-null assertion
         userId: savedOrder.userId,
         userEmail: savedOrder.userEmail,
         userName: savedOrder.userName,
@@ -229,7 +231,10 @@ export class OrdersService {
 
       await queryRunner.manager.save(OrderHistory, historyRecord);
 
-      // 9. PUNTO CRÍTICO: Procesar pago (llamada externa)
+      // 9. COMMITEAR LA ORDEN ANTES DE CREAR EL PAGO
+      await queryRunner.commitTransaction();
+
+      // 10. PUNTO CRÍTICO: Procesar pago (llamada externa) - FUERA de la transacción
       const paymentResult: {
         success: boolean;
         paymentId: number;
@@ -258,25 +263,42 @@ export class OrdersService {
         source_id: dto.source_id || '',
       });
 
-      // 10. Validar el resultado del pago
-      if (!paymentResult || !paymentResult.paymentId)
+      // 11. Validar el resultado del pago - Si falla, eliminar orden Y propagar error original
+      if (!paymentResult || !paymentResult.paymentId) {
+        // Eliminar la orden que ya se commiteó
+        try {
+          await this.orderHistoryRepository.delete({
+            order: { id: savedOrder.id },
+          });
+          await this.ordersDetailsRepository.delete({
+            order: { id: savedOrder.id },
+          });
+          await this.orderRepository.delete({ id: savedOrder.id });
+        } catch (deleteError) {
+          console.error(
+            'Error eliminando orden tras fallo de pago:',
+            deleteError,
+          );
+        }
+
         throw new RpcException({
           status: HttpStatus.BAD_REQUEST,
-          message: 'Error creando el pago. Transacción cancelada.',
+          message: 'Error procesando el pago. Orden eliminada.',
         });
+      }
 
-      // 12. Si es pago con puntos exitoso, actualizar estado
+      // 11. Si es pago con puntos exitoso, actualizar estado
       let finalStatus = OrderStatus.PENDING;
       let finalMessage =
         'Orden creada exitosamente, pendiente de aprobación de pago';
 
       if (dto.paymentMethod === PaymentMethod.POINTS && paymentResult.success) {
-        // Actualizar la orden a APPROVED
+        // Actualizar la orden a APPROVED usando repository directo
         savedOrder.status = OrderStatus.APPROVED;
-        await queryRunner.manager.save(Order, savedOrder);
+        await this.orderRepository.save(savedOrder);
 
-        // Crear historial de aprobación
-        const approvalHistoryRecord = queryRunner.manager.create(OrderHistory, {
+        // Crear historial de aprobación usando repository directo
+        const approvalHistoryRecord = this.orderHistoryRepository.create({
           order: savedOrder,
           userId: savedOrder.userId,
           userEmail: savedOrder.userEmail,
@@ -287,16 +309,13 @@ export class OrdersService {
           metadata: {},
         });
 
-        await queryRunner.manager.save(OrderHistory, approvalHistoryRecord);
+        await this.orderHistoryRepository.save(approvalHistoryRecord);
 
         finalStatus = OrderStatus.APPROVED;
         finalMessage = 'Orden creada y aprobada automáticamente con puntos';
       }
 
-      // 13. CONFIRMAR TODA LA TRANSACCIÓN (Solo aquí se persiste en BD)
-      await queryRunner.commitTransaction();
-
-      // 14. Retornar resultado exitoso
+      // 13. Retornar resultado exitoso
       return {
         orderId: savedOrder.id,
         paymentId: paymentResult.paymentId,
@@ -313,10 +332,36 @@ export class OrdersService {
         message: finalMessage,
       };
     } catch (error) {
-      // ROLLBACK: Si cualquier cosa falla, revertir todo
-      await queryRunner.rollbackTransaction();
+      // ROLLBACK: Solo si la transacción aún está activa
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+        console.error('Error pre-commit creando orden:', error);
+      } else {
+        // La transacción ya se commiteó, eliminar orden manualmente
+        console.error('Error post-commit creando orden:', error);
+        try {
+          if (savedOrder?.id) {
+            await this.orderHistoryRepository.delete({
+              order: { id: savedOrder.id },
+            });
+            await this.ordersDetailsRepository.delete({
+              order: { id: savedOrder.id },
+            });
+            await this.orderRepository.delete({ id: savedOrder.id });
+          }
+        } catch (deleteError) {
+          console.error(
+            'Error eliminando orden tras error post-commit:',
+            deleteError,
+          );
+        }
+      }
 
-      console.error('Error creando orden:', error);
+      // Si es un error de RpcException, re-lanzarlo tal como está
+      if (error instanceof RpcException) {
+        throw error;
+      }
+
       throw new RpcException({
         status: error.status || HttpStatus.INTERNAL_SERVER_ERROR,
         message: error.message || 'Error inesperado creando la orden',
